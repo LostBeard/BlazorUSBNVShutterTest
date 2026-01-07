@@ -37,6 +37,22 @@ namespace BlazorUSBNVShutterTest.Services
             JS.Log("USB OnDisconnect", e);
             //OnConnected?.Invoke();
         }
+        public async Task FindDevices()
+        {
+                       if (USB == null) return;
+            var devices = await USB.GetDevices();
+            foreach (var device in devices)
+            {
+                JS.Log("Found Device", device);
+                if (device.VendorId == 0x0955 && device.ProductId == 0x0007)
+                {
+                    Device = device;
+                    await FirmwareCheck(false);
+                    OnConnected?.Invoke();
+                }
+            }
+
+        }
         public async Task<bool> Connect()
         {
             if (USB == null) return false;
@@ -51,8 +67,8 @@ namespace BlazorUSBNVShutterTest.Services
                     {
                         new USBDeviceFilter
                         {
-                            VendorId = 0x0955, // Nvidia
-                            ProductId = 0x0007 // Product ID for shutter glasses (model I have)
+                            VendorId = 0x0955, // Nvidia (2389) Vendor ID
+                            ProductId = 0x0007 // Product ID for shutter glasses (model I have) (7)
                         }
                     }
                 };

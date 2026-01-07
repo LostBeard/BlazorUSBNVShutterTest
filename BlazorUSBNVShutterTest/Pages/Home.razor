@@ -5,11 +5,12 @@
 <PageTitle>Home</PageTitle>
 
 <p>
-    This Blazor WASM app is being created to test USB NV shutter functionality using WebUSB.
+    This Blazor WASM app demonstrates WebUSB in Blazor using the Nvidia 3D Vision shutter glasses.
 </p>
 <p>
-    <h3>Sources</h3>
+    <h3>References</h3>
     <ul>
+        <li><a href="https://en.wikipedia.org/wiki/Nvidia_3D_Vision">Nvidia 3D Vision on Wikipedia</a></li>
         <li><a href="https://github.com/bobsomers/3dvgl/blob/master/lib/nvstusb.c">GitHub/bobsomers/3dvgl</a></li>
         <li><a href="https://github.com/FlintEastwood/3DVisionActivator/blob/main/src/system/nvidiaShutterGlasses.cpp">GitHub/FlintEastwood/3DVisionActivator</a></li>
     </ul>
@@ -17,7 +18,14 @@
 
 <p role="status">Current count: @currentCount</p>
 
-<button class="btn btn-primary" @onclick="RunIt">Click me</button>
+<button class="btn btn-primary" @onclick="FindDevices">Find Devices</button>
+<button class="btn btn-primary" @onclick="Connect">Connect</button>
+
+<p>
+    <h3>Firmware loading with WebUSB and Blazor</h3>
+    When plugged into USB and no drivers are installed, the button on the front of the Nvidia 3D Vision USB transmitter blinks red, indicating the device needs firmware before it can be used. 
+    The firmware file nvstusb.fw, will be loaded onto the device using WebUSB which causes the button to become solid green, indicating it is ready for operation. [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS)
+</p>
 
 @code {
     [Inject]
@@ -33,8 +41,12 @@
     {
         
     }
-    private async Task RunIt()
+    private async Task Connect()
     {
         await NvidiaShutterGlasses.Connect();
+    }
+    private async Task FindDevices()
+    {
+        await NvidiaShutterGlasses.FindDevices();
     }
 }
