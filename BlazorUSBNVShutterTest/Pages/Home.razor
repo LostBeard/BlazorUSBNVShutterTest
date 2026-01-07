@@ -1,0 +1,40 @@
+﻿@page "/"
+@using BlazorUSBNVShutterTest.Services
+@implements IDisposable
+
+<PageTitle>Home</PageTitle>
+
+<p>
+    This Blazor WASM app is being created to test USB NV shutter functionality using WebUSB.
+</p>
+<p>
+    <h3>Sources</h3>
+    <ul>
+        <li><a href="https://github.com/bobsomers/3dvgl/blob/master/lib/nvstusb.c">GitHub/bobsomers/3dvgl</a></li>
+        <li><a href="https://github.com/FlintEastwood/3DVisionActivator/blob/main/src/system/nvidiaShutterGlasses.cpp">GitHub/FlintEastwood/3DVisionActivator</a></li>
+    </ul>
+</p>
+
+<p role="status">Current count: @currentCount</p>
+
+<button class="btn btn-primary" @onclick="RunIt">Click me</button>
+
+@code {
+    [Inject]
+    NvidiaShutterGlasses NvidiaShutterGlasses { get; set; } = default!;
+
+    private int currentCount = 0;
+
+    protected override void OnInitialized()
+    {
+        
+    }
+    public void Dispose()
+    {
+        
+    }
+    private async Task RunIt()
+    {
+        await NvidiaShutterGlasses.Connect();
+    }
+}
