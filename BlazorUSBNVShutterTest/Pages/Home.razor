@@ -53,15 +53,23 @@
         LogStr += $"{msg}\n";
         StateHasChanged();
     }
+    void Device_OnConnected()
+    {
+        Log($"Device connected: {NvidiaShutterGlasses.Device?.ProductName}");
+    }
+    void Device_OnDisconnected()
+    {
+        Log($"Device disconnected");
+    }
     protected override void OnInitialized()
     {
-        NvidiaShutterGlasses.OnConnected += StateHasChanged;
-        NvidiaShutterGlasses.OnDisconnected += StateHasChanged;
+        NvidiaShutterGlasses.OnConnected += Device_OnConnected;
+        NvidiaShutterGlasses.OnDisconnected += Device_OnDisconnected;
     }
     public void Dispose()
     {
-        NvidiaShutterGlasses.OnConnected -= StateHasChanged;
-        NvidiaShutterGlasses.OnDisconnected -= StateHasChanged;
+        NvidiaShutterGlasses.OnConnected -= Device_OnConnected;
+        NvidiaShutterGlasses.OnDisconnected -= Device_OnDisconnected;
     }
     private async Task FirmwareCheck()
     {
@@ -85,7 +93,6 @@
         try
         {
             await NvidiaShutterGlasses.Connect();
-            Log($"Connect: {NvidiaShutterGlasses.Device!.ProductName}");
         }
         catch (Exception ex)
         {
@@ -96,6 +103,5 @@
     {
         if (!NvidiaShutterGlasses.Connected) return;
         await NvidiaShutterGlasses.Disconnect();
-        Log("Disconnected");
     }
 }
