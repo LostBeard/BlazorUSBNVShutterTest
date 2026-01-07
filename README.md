@@ -14,3 +14,12 @@ This Blazor WASM app demonstrates WebUSB in Blazor using the Nvidia 3D Vision sh
 - *Once the firmware is loaded, clicking the "Toggle Shutters" button will alternately turn the shutter glasses on and off by sending the appropriate command to the USB transmitter.
 
 * Indicates incomplete functionality as of this writing.
+
+## Hardware
+I used the following hardware for testing.
+
+Nvidia 3D Vision shutter glasses with USB transmitter:
+- VendorId 0x0955 - USB Vendor ID Nvidia
+- ProductId 0x0007 - USB Product ID for shutter glasses
+
+![Nvidia 3D Vision shutter glasses with USB transmitter](https://github.com/LostBeard/BlazorUSBNVShutterTest/blob/53e5815a23ab82d27199a63922350d60523ffc72/BlazorUSBNVShutterTest/wwwroot/media/nvidia_3d_vision_ir_emitter_front-300x225.jpg?raw=true)
