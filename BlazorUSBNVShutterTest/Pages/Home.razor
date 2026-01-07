@@ -19,7 +19,7 @@
 <p role="status">Device: @DeviceName</p>
 
 <button class="btn btn-primary" @onclick="LogClear">Clear Log</button>
-<button disabled="@NvidiaShutterGlasses.Connected" class="btn btn-primary" @onclick="Connect">Connect</button>
+<button disabled="@(!NvidiaShutterGlasses.Supported || NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Connect">Connect</button>
 <button disabled="@(!NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Disconnect">Disconnect</button>
 <button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="FirmwareCheck">Firmware Check</button>
 
@@ -63,6 +63,10 @@
     }
     protected override void OnInitialized()
     {
+        if (!NvidiaShutterGlasses.Supported)
+        {
+            Log("WebUSB not supported");
+        }
         NvidiaShutterGlasses.OnConnected += Device_OnConnected;
         NvidiaShutterGlasses.OnDisconnected += Device_OnDisconnected;
     }

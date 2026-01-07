@@ -13,6 +13,7 @@ namespace BlazorUSBNVShutterTest.Services
         public event Action OnConnected = default!;
         public event Action OnDisconnected = default!;
         HttpClient HttpClient;
+        public bool Supported => USB != null;
         List<(int vendorId, int productId)> SupportedDevices = new List<(int vendorId, int productId)>
         {
             (0x0955, 0x0007) // NVIDIA 3D Vision USB IR Emitter
