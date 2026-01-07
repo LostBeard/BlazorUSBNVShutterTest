@@ -20,6 +20,6 @@ I used the following hardware for testing.
 
 Nvidia 3D Vision shutter glasses with USB transmitter:
 - VendorId 0x0955 - USB Vendor ID Nvidia
-- ProductId 0x0007 - USB Product ID for shutter glasses
+- ProductId 0x0007 - USB Product ID for the 3D Vision IR Transmitter (this model)
 
 ![Nvidia 3D Vision shutter glasses with USB transmitter](https://github.com/LostBeard/BlazorUSBNVShutterTest/blob/53e5815a23ab82d27199a63922350d60523ffc72/BlazorUSBNVShutterTest/wwwroot/media/nvidia_3d_vision_ir_emitter_front-300x225.jpg?raw=true)
