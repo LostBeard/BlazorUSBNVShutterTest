@@ -159,6 +159,7 @@ namespace BlazorUSBNVShutterTest.Services
         public bool Connected => Device != null;
         /// <summary>
         /// Uploads the firmware file nvstusb.fw to the connected Nvidia 3D Vision IR Emitter
+        /// https://github.com/bobsomers/3dvgl/blob/fb9deccb78f3ece4884da0e4ed3da316ec324a2d/lib/usb_libusb.c#L108
         /// </summary>
         /// <param name="uploadIfNeeded"></param>
         /// <returns></returns>
