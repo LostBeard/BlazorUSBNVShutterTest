@@ -1,7 +1,6 @@
 ﻿using SpawnDev;
 using SpawnDev.BlazorJS;
 using SpawnDev.BlazorJS.JSObjects;
-using System;
 using System.Buffers.Binary;
 
 namespace BlazorUSBNVShutterTest.Services
@@ -14,6 +13,10 @@ namespace BlazorUSBNVShutterTest.Services
         public event Action OnConnected = default!;
         public event Action OnDisconnected = default!;
         HttpClient HttpClient;
+        List<(int vendorId, int productId)> SupportedDevices = new List<(int vendorId, int productId)>
+        {
+            (0x0955, 0x0007) // NVIDIA 3D Vision USB IR Emitter
+        };
         public NvidiaShutterGlasses(BlazorJSRuntime js, HttpClient httpClient)
         {
             JS = js;
@@ -30,81 +33,139 @@ namespace BlazorUSBNVShutterTest.Services
         void USB_OnConnect(USBConnectionEvent e)
         {
             JS.Log("USB OnConnect", e);
-            //OnConnected?.Invoke();
+            if (Device == null)
+            {
+                // try to reconnect to paired device
+                _ = ReconnectToPaired();
+            }
         }
         void USB_OnDisconnect(USBConnectionEvent e)
         {
             JS.Log("USB OnDisconnect", e);
-            //OnConnected?.Invoke();
-        }
-        public async Task FindDevices()
-        {
-                       if (USB == null) return;
-            var devices = await USB.GetDevices();
-            foreach (var device in devices)
+            if (Device != null)
             {
-                JS.Log("Found Device", device);
-                if (device.VendorId == 0x0955 && device.ProductId == 0x0007)
+                using var disconnectedDevice = e.Device;
+                var sameDevice = Device.JSEquals(disconnectedDevice);
+                if (sameDevice)
                 {
-                    Device = device;
-                    await FirmwareCheck(false);
-                    OnConnected?.Invoke();
+                    Device.Dispose();
+                    Device = null;
+                    OnDisconnected?.Invoke();
                 }
             }
-
         }
-        public async Task<bool> Connect()
+        public async Task ReconnectToPaired()
         {
-            if (USB == null) return false;
-            if (Device != null) return true; // Already connected
-
-            USBDevice? device = null;
+            if (Device != null) return;
+            var devices = await FindSupportedDevices();
+            if (devices.Count > 0)
+            {
+                await SetDevice(devices[0]);
+            }
+        }
+        public async Task<List<USBDevice>> FindSupportedDevices()
+        {
+            var ret = new List<USBDevice>();
+            if (USB == null) return ret;
+            var devices = await USB.GetDevices();
+            JS.Log("_devices", devices);
+            foreach (var device in devices)
+            {
+                foreach (var sd in SupportedDevices)
+                {
+                    if (device.VendorId == sd.vendorId && device.ProductId == sd.productId)
+                    {
+                        ret.Add(device);
+                        break;
+                    }
+                }
+            }
+            return ret;
+        }
+        public async Task Disconnect()
+        {
+            if (USB == null) return;
+            if (Device == null) return;
             try
             {
-                var options = new USBDeviceRequestOptions
+                if (Device.Opened)
                 {
-                    Filters = new List<USBDeviceFilter>
-                    {
-                        new USBDeviceFilter
-                        {
-                            VendorId = 0x0955, // Nvidia (2389) Vendor ID
-                            ProductId = 0x0007 // Product ID for shutter glasses (model I have) (7)
-                        }
-                    }
-                };
-                JS.Log("_options", options);
-
-                device = await USB.RequestDevice(options);
-                if (device == null) return false;
-                await device.Open();
+                    await Device.Close();
+                }
             }
             catch (JSException ex)
             {
-                JS.Log("Device request cancelled or failed", ex.ToString());
-                return false;
+                JS.Log("Device close failed", ex.ToString());
             }
-            if (device == null) return false;
-            Device = device;
-            JS.Log("_device", device);
-            await FirmwareCheck(true);
-
-            OnConnected?.Invoke();
-
-            return Device != null;
+            Device.Dispose();
+            Device = null;
+            OnDisconnected?.Invoke();
         }
         /// <summary>
-        /// When plugged into USB, the Nvidia Shutter Lgasses transmitter I have blinks red.<br/>
-        /// This apparently means the device is not ready to run because it needs firmware to be uploaded.<br/>
-        /// This method can also upload that firmware (nvstusb.fw), which changes the transmitter light from 
-        /// blinking red to solid green, indicating it is ready for operation.
+        /// https://github.com/bobsomers/3dvgl/blob/fb9deccb78f3ece4884da0e4ed3da316ec324a2d/lib/usb_libusb.c#L152
+        /// </summary>
+        /// <param name="reconnectOnly"></param>
+        /// <returns></returns>
+        /// <exception cref="Exception"></exception>
+        public async Task Connect(bool reconnectOnly = false)
+        {
+            if (USB == null) return;
+            if (Device != null) return;
+            // first try to connect to any already authorized devices
+            await ReconnectToPaired();
+            // if Device is now set, or we are reconnectOnly, return
+            if (Device != null || reconnectOnly) return;
+            var device = await USB.RequestDevice(new USBDeviceRequestOptions
+            {
+                Filters = SupportedDevices.Select(v => new USBDeviceFilter
+                {
+                    VendorId = v.vendorId,
+                    ProductId = v.productId
+                }).ToArray()
+            });
+            if (device == null) throw new Exception("Device not found.");
+            await SetDevice(device);
+        }
+        async Task SetDevice(USBDevice device)
+        {
+            JS.Log("_device", device);
+            JS.Set("_device", device);
+            if (!device.Opened)
+            {
+                JS.Log("Opening...");
+                await device.Open();
+                JS.Log("Opened.");
+            }
+            await device.SelectConfiguration(1);
+            await device.ClaimInterface(0);
+            JS.Log("Reconfigured.");
+            Device = device;
+            OnConnected?.Invoke();
+        }
+        public bool Opened
+        {
+            get
+            {
+                var ret = false;
+                try
+                {
+                    ret = Device != null && Device.Opened;
+                }
+                catch { }
+                return ret;
+            }
+        }
+        public bool Connected => Device != null;
+        /// <summary>
+        /// Uploads the firmware file nvstusb.fw to the connected Nvidia 3D Vision IR Emitter
         /// </summary>
         /// <param name="uploadIfNeeded"></param>
         /// <returns></returns>
-        public async Task<bool> FirmwareCheck(bool uploadIfNeeded = false)
+        public async Task<bool> FirmwareUpdate()
         {
             if (Device == null) return false;
-            var firmwareNeeded = await FirmwareNeededCheck(Device);
-            if (firmwareNeeded && uploadIfNeeded)
+            var firmwareNeeded = await FirmwareCheck();
+            if (firmwareNeeded)
             {
                 //  firmware file nvstusb.fw
                 var firmwareBytes = await HttpClient.GetByteArrayAsync("nvstusb.fw");
@@ -125,32 +186,53 @@ namespace BlazorUSBNVShutterTest.Services
                     var chunk = new byte[length];
                     System.Array.Copy(firmwareBytes, i, chunk, 0, length);
                     i += length;
-                    // Send chunk to device
+                    // Send chunk to device position pos
                     await Device.ControlTransferOut(new USBControlTransferParameters
                     {
                         RequestType = "vendor",
                         Recipient = "device",
-                        Request = 0xA0, /* 'Firmware load' */
+                        Request = 0xA0, // Firmware load
                         Value = pos,    // piece destination position
                         Index = 0x0000
                     }, chunk);
                 }
+                try
+                {
+                    await Device.Reset();
+                    await Task.Delay(250);
+                }
+                catch (Exception ex)
+                {
+                    JS.Log($"Reset error: {ex.Message}");
+                }
+                await Device.Close();
+                await Task.Delay(250);
+                await Device.Open();
+                await Task.Delay(250);
                 JS.Log("Firmware upload completed.");
+                await Device.SelectConfiguration(1);
+                await Device.ClaimInterface(0);
+                JS.Log("Reconfigured.");
             }
-            return true;
+            return firmwareNeeded;
         }
-        async Task<bool> FirmwareNeededCheck(USBDevice device)
+        /// <summary>
+        /// Returns true if it appears the firmware needs to be loaded<br/>
+        /// https://github.com/bobsomers/3dvgl/blob/fb9deccb78f3ece4884da0e4ed3da316ec324a2d/lib/usb_libusb.c#L96
+        /// Currently always returns true because the endpoint count always returns 0... 
+        /// </summary>
+        /// <returns></returns>
+        public async Task<bool> FirmwareCheck()
         {
             if (Device == null) return false;
-            var endpointCount = await GetEndpointCount(device);
+            var endpointCount = await GetEndpointCount(Device);
             return endpointCount == 0;
         }
-        async Task<bool> FirmwareUpload(USBDevice device)
-        {
-            if (Device == null) return false;
-            var endpointCount = await GetEndpointCount(device);
-            return endpointCount == 0;
-        }
+        /// <summary>
+        /// https://github.com/bobsomers/3dvgl/blob/fb9deccb78f3ece4884da0e4ed3da316ec324a2d/lib/usb_libusb.c#L76C1-L76C29
+        /// </summary>
+        /// <param name="device"></param>
+        /// <returns></returns>
         async Task<int> GetEndpointCount(USBDevice device)
         {
             var endpoints = 0;

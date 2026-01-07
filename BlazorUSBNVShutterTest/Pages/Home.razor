@@ -16,37 +16,86 @@
     </ul>
 </p>
 
-<p role="status">Current count: @currentCount</p>
+<p role="status">Device: @DeviceName</p>
 
-<button class="btn btn-primary" @onclick="FindDevices">Find Devices</button>
-<button class="btn btn-primary" @onclick="Connect">Connect</button>
+<button class="btn btn-primary" @onclick="LogClear">Clear Log</button>
+<button disabled="@NvidiaShutterGlasses.Connected" class="btn btn-primary" @onclick="Connect">Connect</button>
+<button disabled="@(!NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Disconnect">Disconnect</button>
+<button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="FirmwareCheck">Firmware Check</button>
 
 <p>
     <h3>Firmware loading with WebUSB and Blazor</h3>
-    When plugged into USB and no drivers are installed, the button on the front of the Nvidia 3D Vision USB transmitter blinks red, indicating the device needs firmware before it can be used. 
-    The firmware file nvstusb.fw, will be loaded onto the device using WebUSB which causes the button to become solid green, indicating it is ready for operation. [SpawnDev.BlazorJS](https://github.com/LostBeard/SpawnDev.BlazorJS)
+    When plugged into USB and no drivers are installed, the button on the front of the Nvidia 3D Vision USB transmitter blinks red, indicating the device needs firmware before it can be used.
+    The firmware file nvstusb.fw, will be loaded onto the device using WebUSB which causes the button to become solid green, indicating it is ready for operation.
+</p>
+
+<p>
+    <pre>
+        @LogStr
+    </pre>
 </p>
 
 @code {
     [Inject]
     NvidiaShutterGlasses NvidiaShutterGlasses { get; set; } = default!;
 
-    private int currentCount = 0;
+    private string DeviceName => NvidiaShutterGlasses.Device == null ? "[NOT CONNECTED]" : NvidiaShutterGlasses.Device.ProductName;
 
+    string LogStr = "";
+
+    void LogClear()
+    {
+        LogStr = "";
+        StateHasChanged();
+    }
+    void Log(string msg)
+    {
+        LogStr += $"{msg}\n";
+        StateHasChanged();
+    }
     protected override void OnInitialized()
     {
-        
+        NvidiaShutterGlasses.OnConnected += StateHasChanged;
+        NvidiaShutterGlasses.OnDisconnected += StateHasChanged;
     }
     public void Dispose()
     {
-        
+        NvidiaShutterGlasses.OnConnected -= StateHasChanged;
+        NvidiaShutterGlasses.OnDisconnected -= StateHasChanged;
+    }
+    private async Task FirmwareCheck()
+    {
+        try
+        {
+            var needsUpdate = await NvidiaShutterGlasses.FirmwareCheck();
+            Log($"FirmwareCheck: {needsUpdate}");
+            if (needsUpdate)
+            {
+                var updated = await NvidiaShutterGlasses.FirmwareUpdate();
+                Log($"FirmwareUpdate: {updated}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"FirmwareUpdate error: {ex.Message}");
+        }
     }
     private async Task Connect()
     {
-        await NvidiaShutterGlasses.Connect();
+        try
+        {
+            await NvidiaShutterGlasses.Connect();
+            Log($"Connect: {NvidiaShutterGlasses.Device!.ProductName}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Connect error: {ex.Message}");
+        }
     }
-    private async Task FindDevices()
+    private async Task Disconnect()
     {
-        await NvidiaShutterGlasses.FindDevices();
+        if (!NvidiaShutterGlasses.Connected) return;
+        await NvidiaShutterGlasses.Disconnect();
+        Log("Disconnected");
     }
 }
