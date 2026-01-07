@@ -12,7 +12,7 @@
 		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.1" />
 		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.1" PrivateAssets="all" />
 		<PackageReference Include="SpawnDev.BlazorJS.WebWorkers" Version="2.29.0" />
-		<PackageReference Include="SpawnDev.BlazorJS" Version="2.52.0-preview.7" />
+		<PackageReference Include="SpawnDev.BlazorJS" Version="2.52.0" />
 	</ItemGroup>
 
 </Project>
