@@ -1,5 +1,5 @@
 # BlazorUSBNVShutterTest
-This Blazor WASM app is being created to test WebUSB in Blazor using a device I have on hand, the USB transmitter for Nvidia's 3D Vision shutter glasses.
+This Blazor WASM app demonstrates WebUSB in Blazor using the Nvidia 3D Vision shutter glasses.
 
 ## References
 - [WebUSB API](https://developer.mozilla.org/en-US/docs/Web/API/WebUSB_API) - WebUSB documentation on MDN.
