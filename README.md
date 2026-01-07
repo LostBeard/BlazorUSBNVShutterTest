@@ -18,9 +18,15 @@ This Blazor WASM app demonstrates WebUSB in Blazor using the Nvidia 3D Vision sh
 
 * Indicates incomplete functionality as of this writing.
 
+### Notes
+This demo requires a browser that supports WebUSB.
+
+When tested using Windows 11 Chrome 64bit, the firmware check fails to detect when the firmware is not needed because no endpoints are reported by the device after firmware is loaded. The detection works correctly in Android Chrome. This is likely driver related.
+
 ## Hardware
 NVIDIA 3D Vision USB IR Emitter:
 - VendorId 0x0955 (2389) - USB Vendor ID Nvidia
 - ProductId 0x0007 (7) - USB Product ID for the 3D Vision IR Transmitter (this model)
 
 ![NVIDIA 3D Vision USB IR Emitter](https://github.com/LostBeard/BlazorUSBNVShutterTest/blob/53e5815a23ab82d27199a63922350d60523ffc72/BlazorUSBNVShutterTest/wwwroot/media/nvidia_3d_vision_ir_emitter_front-300x225.jpg?raw=true)
+
