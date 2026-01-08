@@ -7,6 +7,14 @@ namespace BlazorUSBNVShutterTest.Services
 {
     public class NvidiaShutterGlasses : IBackgroundService
     {
+        const long NVSTUSB_CLOCK = 48000000L;
+        const long NVSTUSB_T0_CLOCK = NVSTUSB_CLOCK / 12L;
+        const long NVSTUSB_T2_CLOCK = NVSTUSB_CLOCK / 4L;
+        static uint NVSTUSB_T2_COUNT(double us) => (uint)(-us * (NVSTUSB_T2_CLOCK / 1000000L) + 1);
+        const byte NVSTUSB_CMD_SET_EYE = 0xAA;
+        public bool InvertEyes { get; set; }
+        int EndpointNumber = 2;
+
         BlazorJSRuntime JS;
         public USBDevice? Device;
         USB? USB = null;
@@ -139,10 +147,74 @@ namespace BlazorUSBNVShutterTest.Services
             }
             await device.SelectConfiguration(1);
             await device.ClaimInterface(0);
+            await device.SelectAlternateInterface(0, 0);
             JS.Log("Reconfigured.");
             Device = device;
             OnConnected?.Invoke();
         }
+        /// <summary>
+        /// https://github.com/FlintEastwood/3DVisionActivator/blob/f193ecf7293d4c352a056044e9917b816ced39f4/src/system/nvidiaShutterGlasses.cpp#L294
+        /// </summary>
+        /// <returns></returns>
+        public async Task ToggleEyes1(int offset = 5)
+        {
+            IsLeftEye = !IsLeftEye;
+            var sequence = new int[] { IsLeftEye ? 0x0000feaa : 0x0000ffaa, offset };
+            await writeToPipe(sequence);
+        }
+
+        /// <summary>
+        /// https://github.com/bobsomers/3dvgl/blob/fb9deccb78f3ece4884da0e4ed3da316ec324a2d/lib/nvstusb.c#L326
+        /// https://github.com/eruffaldi/libnvstusb/blob/master/src/nvstusb.c
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <returns></returns>
+        public async Task ToggleEyes(int offset = 5)
+        {
+            var rate = 60;
+            uint b = NVSTUSB_T2_COUNT((1000000 / rate) / 1.8d);
+            IsLeftEye = !IsLeftEye;
+            var leftEye = IsLeftEye;
+            if (InvertEyes) leftEye = !leftEye;
+            var sequence = new byte[8]
+            {
+                NVSTUSB_CMD_SET_EYE,
+                leftEye ? (byte)0xFE : (byte)0xFF,
+                0, 0, // unused
+                (byte)b, (byte)(b>> 8), (byte)(b>> 16), (byte)(b>>24)
+            };
+            await writeToPipe(sequence);
+        }
+        public async Task SendInit()
+        {
+            //var sequence = new int[] { 0x42180300 };
+            var sequence = new int[] { 0x00031842 };
+            await writeToPipe(sequence);
+
+            JS.Log("TransferIn...");
+            var readResult = await Device!.TransferIn(EndpointNumber, 7);
+            JS.Log("readResult", readResult);
+            var readBuffer = readResult.Data!.ReadBytes();
+            JS.Log("readBuffer", readBuffer);
+        }
+        public bool IsLeftEye { get; private set; } = false;
+
+        async Task writeToPipe(int[] data)
+        {
+            if (USB == null) return;
+            if (Device == null) return;
+            using var pipeData = new Int32Array(data);
+            var result = await Device.TransferOut(EndpointNumber, pipeData);
+            JS.Log("writeToPipe", pipeData, result);
+        }
+        async Task writeToPipe(byte[] data)
+        {
+            if (USB == null) return;
+            if (Device == null) return;
+            var result = await Device.TransferOut(EndpointNumber, data);
+            JS.Log("writeToPipe", data, result);
+        }
+
         public bool Opened
         {
             get

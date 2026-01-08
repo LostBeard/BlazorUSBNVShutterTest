@@ -22,6 +22,8 @@
 <button disabled="@(!NvidiaShutterGlasses.Supported || NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Connect">Connect</button>
 <button disabled="@(!NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Disconnect">Disconnect</button>
 <button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="FirmwareCheck">Firmware Check</button>
+<button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="ToggleEyes">Toggle Eyes</button>
+<button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="SendInit">Send Init</button>
 
 <p>
     <h3>Firmware loading with WebUSB and Blazor</h3>
@@ -74,6 +76,28 @@
     {
         NvidiaShutterGlasses.OnConnected -= Device_OnConnected;
         NvidiaShutterGlasses.OnDisconnected -= Device_OnDisconnected;
+    }
+    async Task SendInit()
+    {
+        try
+        {
+            await NvidiaShutterGlasses.SendInit();
+        }
+        catch (Exception ex)
+        {
+            Log($"SendInit error: {ex.Message}");
+        }
+    }
+    async Task ToggleEyes()
+    {
+        try
+        {
+            await NvidiaShutterGlasses.ToggleEyes();
+        }
+        catch (Exception ex)
+        {
+            Log($"ToggleEyes error: {ex.Message}");
+        }
     }
     private async Task FirmwareCheck()
     {
