@@ -273,7 +273,6 @@ namespace BlazorUSBNVShutterTest.Services
                 await device.ClaimInterface(foundInterface.InterfaceNumber);
                 // Only select alternate if it's not the default (0) or if we need to enforce it
                 await device.SelectAlternateInterface(foundInterface.InterfaceNumber, foundAlternate.AlternateSetting);
-                await device.SelectAlternateInterface(foundInterface.InterfaceNumber, foundAlternate.AlternateSetting);
                 EndpointNumber = outEndpoint.EndpointNumber;
                 
                 if (inEndpoint != null)
@@ -318,26 +317,48 @@ namespace BlazorUSBNVShutterTest.Services
 
         public async Task<DeviceInputs?> ReadKeys()
         {
-            if (Device == null || InEndpointNumber < 0) return null;
+            if (Device == null) { Log("ReadKeys: Device is null"); return null; }
+            if (InEndpointNumber < 0) { Log("ReadKeys: No IN Endpoint found during connection."); return null; }
+
+            Log($"ReadKeys: Sending cmd to Endpoint {EndpointNumber}, reading from {InEndpointNumber}...");
 
             // Command: 0x42 (READ|CLEAR), Addr 0x18, Len 3
             var cmd = new byte[] { 0x42, 0x18, 0x03, 0x00 };
-            await writeToPipe(cmd);
+            try 
+            {
+                await writeToPipe(cmd);
+            }
+            catch (Exception ex)
+            {
+                Log($"ReadKeys: Write failed: {ex.Message}");
+                return null;
+            }
 
             // Read 7 bytes (4 header + 3 data)
-            var res = await Device.TransferIn(InEndpointNumber, 7);
-            if (res.Status == "ok" && res.Data != null && res.Data.ByteLength >= 7)
+            try
             {
-                // Use ReadBytes() directly from the Uint8Array/ArrayBuffer wrapper
-                using var u8 = new SpawnDev.BlazorJS.JSObjects.Uint8Array(res.Data.Buffer);
-                var bytes = u8.ReadBytes();
+                var res = await Device.TransferIn(InEndpointNumber, 7);
+                Log($"ReadKeys: TransferIn Status: {res.Status}, Bytes: {res.Data?.ByteLength}");
                 
-                return new DeviceInputs 
+                if (res.Status == "ok" && res.Data != null && res.Data.ByteLength >= 7)
                 {
-                     DeltaWheel = (sbyte)bytes[4],
-                     PressedDeltaWheel = (sbyte)bytes[5],
-                     Toggled3D = (bytes[6] & 0x01) != 0
-                };
+                    // Use ReadBytes() directly from the Uint8Array/ArrayBuffer wrapper
+                    using var u8 = new SpawnDev.BlazorJS.JSObjects.Uint8Array(res.Data.Buffer);
+                    var bytes = u8.ReadBytes();
+                    
+                    Log($"ReadKeys: Data: {string.Join(",", bytes)}");
+
+                    return new DeviceInputs 
+                    {
+                         DeltaWheel = (sbyte)bytes[4],
+                         PressedDeltaWheel = (sbyte)bytes[5],
+                         Toggled3D = (bytes[6] & 0x01) != 0
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"ReadKeys: TransferIn failed: {ex.Message}");
             }
             return null;
         }
@@ -560,7 +581,9 @@ namespace BlazorUSBNVShutterTest.Services
                 // We must drop the handle and poll for the new one.
                 try
                 {
+                    Log("Resetting the device...");
                     await Device.Reset();
+                    Log("Reset success");
                 }
                 catch (Exception ex)
                 {
