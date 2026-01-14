@@ -16,7 +16,7 @@
     </ul>
 </p>
 
-<p role="status">Device: @DeviceName</p>
+<p role="status">Device: @DeviceName (Endpoints: @NvidiaShutterGlasses.EndpointCount)</p>
 
 <button class="btn btn-primary" @onclick="LogClear">Clear Log</button>
 <button disabled="@(!NvidiaShutterGlasses.Supported || NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Connect">Connect</button>

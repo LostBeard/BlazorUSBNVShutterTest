@@ -22,6 +22,7 @@ namespace BlazorUSBNVShutterTest.Services
         BlazorJSRuntime JS;
         public USBDevice? Device;
         USB? USB = null;
+        public int EndpointCount { get; private set; } = 0;
         public event Action OnConnected = default!;
         public event Action OnDisconnected = default!;
         HttpClient HttpClient;
@@ -142,6 +143,7 @@ namespace BlazorUSBNVShutterTest.Services
         async Task SetDevice(USBDevice device)
         {
             JS.Log("_device", device);
+            JS.Log($"Device VID: 0x{device.VendorId:X4} PID: 0x{device.ProductId:X4}");
             JS.Set("_device", device);
             if (!device.Opened)
             {
@@ -156,6 +158,29 @@ namespace BlazorUSBNVShutterTest.Services
             USBConfiguration? foundConfig = null;
 
             JS.Log("USB Configurations:", device.Configurations);
+            try
+            {
+                var json = JS.Call<string>("JSON.stringify", device.Configurations);
+                JS.Log("USB Configurations JSON:", json);
+            }
+            catch (Exception ex)
+            {
+                JS.Log("Failed to stringify configurations:", ex.Message);
+            }
+
+            // Calculate total endpoint count for debugging
+            var totalEndpoints = 0;
+            foreach (var config in device.Configurations)
+            {
+               foreach (var iface in config.Interfaces)
+               {
+                   foreach (var alt in iface.Alternates)
+                   {
+                        totalEndpoints += alt.Endpoints.Length;
+                   }
+               }
+            }
+            EndpointCount = totalEndpoints;
 
             foreach (var config in device.Configurations)
             {
@@ -193,9 +218,25 @@ namespace BlazorUSBNVShutterTest.Services
             }
             else
             {
-                JS.Log("No endpoints found - Device may need firmware.");
-                // Do NOT claim interfaces if none found. Just let it be connected so we can do FirmwareCheck/Update.
-                // EndpointNumber remains -1
+                JS.Log("No endpoints found via discovery - Device may need firmware OR we need to fallback.");
+                
+                // Fallback to original behavior if discovery fails.
+                // This allows us to hit the original error (which confirms the endpoint exists but isn't claimed correctly)
+                // or forces it to work if the rigorous checks above were too strict.
+                JS.Log("Attempting Fallback to Config 1, Interface 0, Endpoint 2...");
+                try 
+                {
+                    await device.SelectConfiguration(1);
+                    await device.ClaimInterface(0);
+                    await device.SelectAlternateInterface(0, 0);
+                    EndpointNumber = 2;
+                    JS.Log("Fallback configuration successful.");
+                }
+                catch (Exception ex)
+                {
+                    JS.Log($"Fallback configuration failed: {ex.Message}");
+                    // Leaving EndpointNumber as -1 so writeToPipe will still fail safely if this didn't work.
+                }
             }
 
             JS.Log($"Reconfigured. Using Endpoint: {EndpointNumber}");
@@ -406,22 +447,53 @@ namespace BlazorUSBNVShutterTest.Services
                         Index = 0x0000
                     }, chunk);
                 }
+                // Device.Reset() causes the device to disconnect and reconnect
+                // On Windows this invalidates the current handle immediately.
+                // We must drop the handle and poll for the new one.
                 try
                 {
                     await Device.Reset();
-                    await Task.Delay(250);
                 }
                 catch (Exception ex)
                 {
-                    JS.Log($"Reset error: {ex.Message}");
+                    JS.Log($"Reset error (expected if device disconnects immediately): {ex.Message}");
                 }
-                await Device.Close();
-                await Task.Delay(250);
-                await Task.Delay(250);
-                await Device.Open();
-                await Task.Delay(250);
-                JS.Log("Firmware upload completed.");
-                await SetDevice(Device);
+                
+                Device = null; 
+                OnDisconnected?.Invoke();
+                
+                JS.Log("Waiting for device to reappear...");
+                
+                // Poll for the device to come back (limit to ~15 seconds)
+                for (var attempt = 0; attempt < 30; attempt++) 
+                {
+                    await Task.Delay(500);
+                    
+                    // If OnConnect event fired and set the device already
+                    if (Device != null) 
+                    {
+                        JS.Log("Device reconnected automatically via OnConnect.");
+                        break;
+                    }
+
+                    // Scan for devices
+                    var devices = await FindSupportedDevices();
+                    if (devices.Count > 0)
+                    {
+                        JS.Log("Found device during polling.");
+                        await SetDevice(devices[0]);
+                        break;
+                    }
+                }
+
+                if (Device != null)
+                {
+                    JS.Log("Firmware update sequence complete. Device verified.");
+                }
+                else
+                {
+                    JS.Log("Timed out waiting for device to reconnect.");
+                }
             }
             return firmwareNeeded;
         }
