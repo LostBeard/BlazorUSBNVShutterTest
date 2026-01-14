@@ -308,11 +308,21 @@ namespace BlazorUSBNVShutterTest.Services
         /// <returns></returns>
         public async Task ToggleEyes(int offset = 5)
         {
+            var rate = 120;
+            uint b = NVSTUSB_T2_COUNT((1000000 / rate) / 1.8d);
             IsLeftEye = !IsLeftEye;
-            Log($"Toggling eyes (Robust). IsLeftEye: {IsLeftEye}");
-            await Initialize(120, IsLeftEye);
+            Log($"Toggling eyes (SetEye Cmd). IsLeftEye: {IsLeftEye}");
+            
+            var sequence = new byte[8]
+            {
+                NVSTUSB_CMD_SET_EYE,
+                IsLeftEye ? (byte)0xFE : (byte)0xFF,
+                0, 0, // unused
+                (byte)b, (byte)(b>> 8), (byte)(b>> 16), (byte)(b>>24)
+            };
+            await writeToPipe(sequence);
         }
-        public async Task Initialize(float rate = 120, bool invert = false)
+        public async Task Initialize(float rate = 120)
         {
             if (Device == null) return;
 
@@ -347,10 +357,11 @@ namespace BlazorUSBNVShutterTest.Services
                                            *       if PD1 is set, delay until turning eye off? */
 
                 /* wave forms to send via IR: */
-                (byte)(!invert ? 0x30 : 0x24), /* 2013: Left Off (or Right Off if inverted) */
-                (byte)(!invert ? 0x28 : 0x22), /* 2014: Left On  (or Right On if inverted)  */
-                (byte)(!invert ? 0x24 : 0x30), /* 2015: Right Off (or Left Off if inverted) */
-                (byte)(!invert ? 0x22 : 0x28), /* 2016: Right On  (or Left On if inverted)  */
+                /* wave forms to send via IR: */
+                0x30,                     /* 2013: 110000 PD1=0, PD2=0: left eye off  */
+                0x28,                     /* 2014: 101000 PD1=1, PD2=0: left eye on   */
+                0x24,                     /* 2015: 100100 PD1=0, PD2=1: right eye off */
+                0x22,                     /* 2016: 100010 PD1=1, PD2=1: right eye on  */
 
                 /* ?? used when frameState is != 2, for toggling bits in Port B,
                  * values seem to have no influence on the glasses or infrared signals */
