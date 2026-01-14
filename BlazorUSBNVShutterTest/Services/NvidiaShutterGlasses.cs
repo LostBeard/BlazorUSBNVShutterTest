@@ -5,6 +5,13 @@ using System.Buffers.Binary;
 
 namespace BlazorUSBNVShutterTest.Services
 {
+    public class DeviceInputs
+    {
+        public int DeltaWheel { get; set; }
+        public int PressedDeltaWheel { get; set; }
+        public bool Toggled3D { get; set; }
+    }
+
     public class NvidiaShutterGlasses : IBackgroundService
     {
         const long NVSTUSB_CLOCK = 48000000L;
@@ -20,6 +27,7 @@ namespace BlazorUSBNVShutterTest.Services
         public enum ShutterMode { Normal, LeftClosed, RightClosed, SlowDebug }
         public ShutterMode CurrentMode { get; private set; } = ShutterMode.Normal;
         int EndpointNumber = -1;
+        int InEndpointNumber = -1;
 
         BlazorJSRuntime JS;
         public USBDevice? Device;
@@ -199,8 +207,9 @@ namespace BlazorUSBNVShutterTest.Services
                 await device.Open();
                 Log("Opened.");
             }
-            // Search for the first OUT endpoint in ALL configurations
+            // Search for endpoints in ALL configurations
             USBEndpoint? outEndpoint = null;
+            USBEndpoint? inEndpoint = null;
             USBInterface? foundInterface = null;
             USBAlternateInterface? foundAlternate = null;
             USBConfiguration? foundConfig = null;
@@ -238,16 +247,18 @@ namespace BlazorUSBNVShutterTest.Services
                     {
                         foreach (var endpoint in alt.Endpoints)
                         {
-                            if (endpoint.Direction == "out")
+                            if (endpoint.Direction == "out" && outEndpoint == null)
                             {
                                 outEndpoint = endpoint;
                                 foundInterface = iface;
                                 foundAlternate = alt;
                                 foundConfig = config;
-                                break;
+                            }
+                            if (endpoint.Direction == "in" && inEndpoint == null)
+                            {
+                                inEndpoint = endpoint;
                             }
                         }
-                        if (outEndpoint != null) break;
                     }
                     if (outEndpoint != null) break;
                 }
@@ -262,7 +273,19 @@ namespace BlazorUSBNVShutterTest.Services
                 await device.ClaimInterface(foundInterface.InterfaceNumber);
                 // Only select alternate if it's not the default (0) or if we need to enforce it
                 await device.SelectAlternateInterface(foundInterface.InterfaceNumber, foundAlternate.AlternateSetting);
+                await device.SelectAlternateInterface(foundInterface.InterfaceNumber, foundAlternate.AlternateSetting);
                 EndpointNumber = outEndpoint.EndpointNumber;
+                
+                if (inEndpoint != null)
+                {
+                    InEndpointNumber = inEndpoint.EndpointNumber;
+                    Log($"Found IN Endpoint: {InEndpointNumber}");
+                }
+                else
+                {
+                    // Fallback guess: typically 0x84 (132) or just logical 4? WebUSB expects endpoint number (e.g. 4)
+                    Log("Warning: No IN endpoint found during scan.");
+                }
             }
             else
             {
@@ -290,6 +313,33 @@ namespace BlazorUSBNVShutterTest.Services
             Log($"Reconfigured. Using Endpoint: {EndpointNumber}");
             Device = device;
             OnConnected?.Invoke();
+        }
+
+
+        public async Task<DeviceInputs?> ReadKeys()
+        {
+            if (Device == null || InEndpointNumber < 0) return null;
+
+            // Command: 0x42 (READ|CLEAR), Addr 0x18, Len 3
+            var cmd = new byte[] { 0x42, 0x18, 0x03, 0x00 };
+            await writeToPipe(cmd);
+
+            // Read 7 bytes (4 header + 3 data)
+            var res = await Device.TransferIn(InEndpointNumber, 7);
+            if (res.Status == "ok" && res.Data != null && res.Data.ByteLength >= 7)
+            {
+                // Use ReadBytes() directly from the Uint8Array/ArrayBuffer wrapper
+                using var u8 = new SpawnDev.BlazorJS.JSObjects.Uint8Array(res.Data.Buffer);
+                var bytes = u8.ReadBytes();
+                
+                return new DeviceInputs 
+                {
+                     DeltaWheel = (sbyte)bytes[4],
+                     PressedDeltaWheel = (sbyte)bytes[5],
+                     Toggled3D = (bytes[6] & 0x01) != 0
+                };
+            }
+            return null;
         }
         /// <summary>
         /// https://github.com/FlintEastwood/3DVisionActivator/blob/f193ecf7293d4c352a056044e9917b816ced39f4/src/system/nvidiaShutterGlasses.cpp#L294

@@ -24,7 +24,15 @@
 <button disabled="@(!NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Disconnect">Disconnect</button>
 <button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="FirmwareCheck">Firmware Check</button>
 <button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="ToggleEyes">Toggle Eyes</button>
+<button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="ReadInputs">Read Inputs</button>
 <button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="SendInit">Send Init</button>
+
+<p>
+    <h4>Inputs</h4>
+    <div>Wheel: @CurrentInputs.DeltaWheel</div>
+    <div>Pressed Wheel: @CurrentInputs.PressedDeltaWheel</div>
+    <div>Button State: @CurrentInputs.Toggled3D</div>
+</p>
 
 <p>
     <h3>Firmware loading with WebUSB and Blazor</h3>
@@ -106,6 +114,29 @@
         catch (Exception ex)
         {
             Log($"ToggleEyes error: {ex.Message}");
+        }
+    }
+    BlazorUSBNVShutterTest.Services.DeviceInputs CurrentInputs = new();
+
+    async Task ReadInputs()
+    {
+        try
+        {
+            var inputs = await NvidiaShutterGlasses.ReadKeys();
+            if (inputs != null)
+            {
+                CurrentInputs = inputs;
+                Log($"Inputs Read. Button: {inputs.Toggled3D}");
+                StateHasChanged();
+            }
+            else
+            {
+                Log("ReadKeys returned null (no data or error).");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"ReadInputs error: {ex.Message}");
         }
     }
     private async Task FirmwareCheck()
