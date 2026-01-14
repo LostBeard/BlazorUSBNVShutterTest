@@ -254,9 +254,17 @@ namespace BlazorUSBNVShutterTest.Services
                                 foundAlternate = alt;
                                 foundConfig = config;
                             }
-                            if (endpoint.Direction == "in" && inEndpoint == null)
+                            if (endpoint.Direction == "in")
                             {
-                                inEndpoint = endpoint;
+                                // Prefer Endpoint 4 if available (per nvstusb.c), otherwise take first found
+                                if (endpoint.EndpointNumber == 4)
+                                {
+                                    inEndpoint = endpoint;
+                                }
+                                else if (inEndpoint == null)
+                                {
+                                    inEndpoint = endpoint;
+                                }
                             }
                         }
                     }
@@ -337,7 +345,16 @@ namespace BlazorUSBNVShutterTest.Services
             // Read 7 bytes (4 header + 3 data)
             try
             {
-                var res = await Device.TransferIn(InEndpointNumber, 7);
+                var transferTask = Device.TransferIn(InEndpointNumber, 7);
+                var timeoutTask = Task.Delay(2000); // 2 second timeout
+
+                if (await Task.WhenAny(transferTask, timeoutTask) == timeoutTask)
+                {
+                    Log("ReadKeys: TransferIn Timed Out (2000ms).");
+                    return null;
+                }
+
+                var res = await transferTask;
                 Log($"ReadKeys: TransferIn Status: {res.Status}, Bytes: {res.Data?.ByteLength}");
                 
                 if (res.Status == "ok" && res.Data != null && res.Data.ByteLength >= 7)
