@@ -11,9 +11,13 @@ namespace BlazorUSBNVShutterTest.Services
         const long NVSTUSB_T0_CLOCK = NVSTUSB_CLOCK / 12L;
         const long NVSTUSB_T2_CLOCK = NVSTUSB_CLOCK / 4L;
         static uint NVSTUSB_T2_COUNT(double us) => (uint)(-us * (NVSTUSB_T2_CLOCK / 1000000L) + 1);
+        static uint NVSTUSB_T0_COUNT(double us) => (uint)(-us * (NVSTUSB_T0_CLOCK / 1000000L) + 1);
+        const byte NVSTUSB_CMD_WRITE = 0x01;
+        const byte NVSTUSB_CMD_READ = 0x02;
+        const byte NVSTUSB_CMD_CLEAR = 0x40;
         const byte NVSTUSB_CMD_SET_EYE = 0xAA;
         public bool InvertEyes { get; set; }
-        int EndpointNumber = 2;
+        int EndpointNumber = -1;
 
         BlazorJSRuntime JS;
         public USBDevice? Device;
@@ -145,10 +149,56 @@ namespace BlazorUSBNVShutterTest.Services
                 await device.Open();
                 JS.Log("Opened.");
             }
-            await device.SelectConfiguration(1);
-            await device.ClaimInterface(0);
-            await device.SelectAlternateInterface(0, 0);
-            JS.Log("Reconfigured.");
+            // Search for the first OUT endpoint in ALL configurations
+            USBEndpoint? outEndpoint = null;
+            USBInterface? foundInterface = null;
+            USBAlternateInterface? foundAlternate = null;
+            USBConfiguration? foundConfig = null;
+
+            JS.Log("USB Configurations:", device.Configurations);
+
+            foreach (var config in device.Configurations)
+            {
+                foreach (var iface in config.Interfaces)
+                {
+                    foreach (var alt in iface.Alternates)
+                    {
+                        foreach (var endpoint in alt.Endpoints)
+                        {
+                            if (endpoint.Direction == "out")
+                            {
+                                outEndpoint = endpoint;
+                                foundInterface = iface;
+                                foundAlternate = alt;
+                                foundConfig = config;
+                                break;
+                            }
+                        }
+                        if (outEndpoint != null) break;
+                    }
+                    if (outEndpoint != null) break;
+                }
+                if (outEndpoint != null) break;
+            }
+
+            if (outEndpoint != null && foundInterface != null && foundAlternate != null && foundConfig != null)
+            {
+                JS.Log($"Found Endpoint: {outEndpoint.EndpointNumber} Interface: {foundInterface.InterfaceNumber} Alt: {foundAlternate.AlternateSetting} Config: {foundConfig.ConfigurationValue}");
+                
+                await device.SelectConfiguration(foundConfig.ConfigurationValue);
+                await device.ClaimInterface(foundInterface.InterfaceNumber);
+                // Only select alternate if it's not the default (0) or if we need to enforce it
+                await device.SelectAlternateInterface(foundInterface.InterfaceNumber, foundAlternate.AlternateSetting);
+                EndpointNumber = outEndpoint.EndpointNumber;
+            }
+            else
+            {
+                JS.Log("No endpoints found - Device may need firmware.");
+                // Do NOT claim interfaces if none found. Just let it be connected so we can do FirmwareCheck/Update.
+                // EndpointNumber remains -1
+            }
+
+            JS.Log($"Reconfigured. Using Endpoint: {EndpointNumber}");
             Device = device;
             OnConnected?.Invoke();
         }
@@ -185,17 +235,101 @@ namespace BlazorUSBNVShutterTest.Services
             };
             await writeToPipe(sequence);
         }
+        public async Task Initialize(float rate = 120)
+        {
+            if (Device == null) return;
+
+            /* some timing voodoo */
+            int frameTime = (int)(1000000.0 / rate);     /* 8.33333 ms if 120 Hz */
+            int activeTime = 2080;                 /* 2.08000 ms time each eye is on*/
+
+            uint w = NVSTUSB_T2_COUNT(4568.50);      /* 4.56800 ms */
+            uint x = NVSTUSB_T0_COUNT(4774.25);      /* 4.77425 ms */
+            uint y = NVSTUSB_T0_COUNT(activeTime);
+            uint z = NVSTUSB_T2_COUNT(frameTime);
+
+            var cmdTimings = new byte[] {
+                NVSTUSB_CMD_WRITE,      /* write data */
+                0x00,                   /* to address 0x2007 (0x2007+0x00) = ?? */
+                0x18, 0x00,             /* 24 bytes follow */
+
+                /* original: e1 29 ff ff (-54815; -55835) */
+                (byte)w, (byte)(w>>8), (byte)(w>>16), (byte)(w>>24),    /* 2007: ?? some timer 2 counter, 1020 is subtracted from this
+                                           *       loaded at startup with:
+                                           *       0x44 0xEC 0xFE 0xFF (-70588(-1020)) */ 
+                /* original: 68 b5 ff ff (-19096), 4.774 ms */
+                (byte)x, (byte)(x>>8), (byte)(x>>16), (byte)(x>>24),    /* 200b: ?? counter saved at long at address 0x4f
+                                           *       increased at timer 0 interrupt if bit 20h.1 
+                                           *       is cleared, on overflow
+                                           *       to 0 the code at 0x03c8 is executed.
+                                           *       timer 0 will be started with this value
+                                           *       by timer2 */
+
+                /* original: 81 df ff ff (-8319), 2.08 ms */
+                (byte)y, (byte)(y>>8), (byte)(y>>16), (byte)(y>>24),    /* 200f: ?? counter saved at long at address 0x4f, 784 is added to this
+                                           *       if PD1 is set, delay until turning eye off? */
+
+                /* wave forms to send via IR: */
+                0x30,                     /* 2013: 110000 PD1=0, PD2=0: left eye off  */
+                0x28,                     /* 2014: 101000 PD1=1, PD2=0: left eye on   */
+                0x24,                     /* 2015: 100100 PD1=0, PD2=1: right eye off */
+                0x22,                     /* 2016: 100010 PD1=1, PD2=1: right eye on  */
+
+                /* ?? used when frameState is != 2, for toggling bits in Port B,
+                 * values seem to have no influence on the glasses or infrared signals */
+                0x0a,                     /* 2017: 1010 */
+                0x08,                     /* 2018: 1000 */
+                0x05,                     /* 2019: 0101 */
+                0x04,                     /* 201a: 0100 */
+
+                (byte)z, (byte)(z>>8), (byte)(z>>16), (byte)(z>>24)     /* 201b: timer 2 reload value */
+              };
+            await writeToPipe(cmdTimings);
+
+            var cmd0x1c = new byte[] {
+                NVSTUSB_CMD_WRITE,      /* write data */
+                0x1c,                   /* to address 0x2023 (0x2007+0x1c) = ?? */
+                0x02, 0x00,             /* 2 bytes follow */
+
+                0x02, 0x00              /* ?? seems to be the start value of some 
+                                           counter. runs up to 6, some things happen
+                                           when it is lower, that will stop if when
+                                           it reaches 6. could be the index to 6 byte values 
+                                           at 0x17ce that are loaded into TH0*/
+              };
+            await writeToPipe(cmd0x1c);
+
+            /* wait at most 2 seconds before going into idle */
+            int timeout = (int)(rate * 4);
+
+            var cmdTimeout = new byte[] {
+                NVSTUSB_CMD_WRITE,      /* write data */
+                0x1e,                   /* to address 0x2025 (0x2007+0x1e) = timeout */
+                0x02, 0x00,             /* 2 bytes follow */
+
+                (byte)timeout, (byte)(timeout>>8)     /* idle timeout (number of frames) */
+              };
+            await writeToPipe(cmdTimeout);
+
+            var cmd0x1b = new byte[] {
+                NVSTUSB_CMD_WRITE,      /* write data */
+                0x1b,                   /* to address 0x2022 (0x2007+0x1b) = ?? */
+                0x01, 0x00,             /* 1 byte follows */
+
+                0x07                    /* ?? compared with byte at 0x29 in TD_Poll()
+                                           bit 0-1: index to a table of 4 bytes at 0x17d4 (0x00,0x08,0x04,0x0C),
+                                           PB1 is set in TD_Poll() if this index is 0, cleared otherwise
+                                           bit 2:   set bool21_4, start timer 1, enable ext. int. 5
+                                           bit 3:   PC1 is set to the inverted value of this bit in TD_Poll()
+                                           bit 4-5: index to a table of 4 bytes at 0x2a 
+                                           bit 6:   restart t0 on some conditions in TD_Poll()
+                                         */
+              };
+            await writeToPipe(cmd0x1b);
+        }
         public async Task SendInit()
         {
-            //var sequence = new int[] { 0x42180300 };
-            var sequence = new int[] { 0x00031842 };
-            await writeToPipe(sequence);
-
-            JS.Log("TransferIn...");
-            var readResult = await Device!.TransferIn(EndpointNumber, 7);
-            JS.Log("readResult", readResult);
-            var readBuffer = readResult.Data!.ReadBytes();
-            JS.Log("readBuffer", readBuffer);
+            await Initialize();
         }
         public bool IsLeftEye { get; private set; } = false;
 
@@ -203,6 +337,7 @@ namespace BlazorUSBNVShutterTest.Services
         {
             if (USB == null) return;
             if (Device == null) return;
+            if (EndpointNumber < 0) throw new Exception("No valid USB endpoint found. Device may need firmware or drivers are incorrect.");
             using var pipeData = new Int32Array(data);
             var result = await Device.TransferOut(EndpointNumber, pipeData);
             JS.Log("writeToPipe", pipeData, result);
@@ -211,6 +346,7 @@ namespace BlazorUSBNVShutterTest.Services
         {
             if (USB == null) return;
             if (Device == null) return;
+            if (EndpointNumber < 0) throw new Exception("No valid USB endpoint found. Device may need firmware or drivers are incorrect.");
             var result = await Device.TransferOut(EndpointNumber, data);
             JS.Log("writeToPipe", data, result);
         }
@@ -281,12 +417,11 @@ namespace BlazorUSBNVShutterTest.Services
                 }
                 await Device.Close();
                 await Task.Delay(250);
+                await Task.Delay(250);
                 await Device.Open();
                 await Task.Delay(250);
                 JS.Log("Firmware upload completed.");
-                await Device.SelectConfiguration(1);
-                await Device.ClaimInterface(0);
-                JS.Log("Reconfigured.");
+                await SetDevice(Device);
             }
             return firmwareNeeded;
         }
