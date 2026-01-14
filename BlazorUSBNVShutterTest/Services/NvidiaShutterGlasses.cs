@@ -23,8 +23,12 @@ namespace BlazorUSBNVShutterTest.Services
         public USBDevice? Device;
         USB? USB = null;
         public int EndpointCount { get; private set; } = 0;
+        public int VendorId { get; private set; } = 0;
+        public int ProductId { get; private set; } = 0;
+        public string DeviceVersion { get; private set; } = "";
         public event Action OnConnected = default!;
         public event Action OnDisconnected = default!;
+        public event Action<string> OnLog = default!;
         HttpClient HttpClient;
         public bool Supported => USB != null;
         List<(int vendorId, int productId)> SupportedDevices = new List<(int vendorId, int productId)>
@@ -44,9 +48,24 @@ namespace BlazorUSBNVShutterTest.Services
                 USB.OnDisconnect += USB_OnDisconnect;
             }
         }
+        void Log(string msg)
+        {
+            JS.Log(msg);
+            OnLog?.Invoke(msg);
+        }
+        void Log(string msg, object arg)
+        {
+            JS.Log(msg, arg);
+            OnLog?.Invoke(msg);
+        }
+        void Log(string msg, object arg1, object arg2)
+        {
+            JS.Log(msg, arg1, arg2);
+            OnLog?.Invoke(msg);
+        }
         void USB_OnConnect(USBConnectionEvent e)
         {
-            JS.Log("USB OnConnect", e);
+            Log("USB OnConnect", e);
             if (Device == null)
             {
                 // try to reconnect to paired device
@@ -55,7 +74,7 @@ namespace BlazorUSBNVShutterTest.Services
         }
         void USB_OnDisconnect(USBConnectionEvent e)
         {
-            JS.Log("USB OnDisconnect", e);
+            Log("USB OnDisconnect", e);
             if (Device != null)
             {
                 using var disconnectedDevice = e.Device;
@@ -82,19 +101,43 @@ namespace BlazorUSBNVShutterTest.Services
             var ret = new List<USBDevice>();
             if (USB == null) return ret;
             var devices = await USB.GetDevices();
-            JS.Log("_devices", devices);
+            Log("_devices raw", devices);
+            
+            var candidates = new List<(USBDevice device, int epCount)>();
+
             foreach (var device in devices)
             {
                 foreach (var sd in SupportedDevices)
                 {
                     if (device.VendorId == sd.vendorId && device.ProductId == sd.productId)
                     {
-                        ret.Add(device);
+                        // Calculate endpoints for this candidate
+                        var epCount = 0;
+                        if (device.Configurations != null) 
+                        {
+                            foreach(var c in device.Configurations)
+                                foreach(var i in c.Interfaces)
+                                    foreach(var a in i.Alternates)
+                                        epCount += a.Endpoints.Length;
+                        }
+                        
+                        candidates.Add((device, epCount));
                         break;
                     }
                 }
             }
-            return ret;
+            
+            // Log candidates to help debug "Ghost Device" theory
+            Log($"Found {candidates.Count} matching device(s).");
+            foreach(var c in candidates)
+            {
+                 Log($"Candidate: VID {c.device.VendorId:X4} PID {c.device.ProductId:X4} Endpoints: {c.epCount}");
+            }
+
+            // Sort: Devices with endpoints FIRST.
+            var sorted = candidates.OrderByDescending(x => x.epCount).Select(x => x.device).ToList();
+            
+            return sorted;
         }
         public async Task Disconnect()
         {
@@ -109,7 +152,7 @@ namespace BlazorUSBNVShutterTest.Services
             }
             catch (JSException ex)
             {
-                JS.Log("Device close failed", ex.ToString());
+                Log("Device close failed " + ex.ToString());
             }
             Device.Dispose();
             Device = null;
@@ -142,14 +185,17 @@ namespace BlazorUSBNVShutterTest.Services
         }
         async Task SetDevice(USBDevice device)
         {
-            JS.Log("_device", device);
-            JS.Log($"Device VID: 0x{device.VendorId:X4} PID: 0x{device.ProductId:X4}");
+            Log("_device", device);
+            VendorId = device.VendorId;
+            ProductId = device.ProductId;
+            DeviceVersion = $"{device.DeviceVersionMajor}.{device.DeviceVersionMinor}.{device.DeviceVersionSubminor}";
+            Log($"Device VID: 0x{device.VendorId:X4} PID: 0x{device.ProductId:X4} Ver: {DeviceVersion}");
             JS.Set("_device", device);
             if (!device.Opened)
             {
-                JS.Log("Opening...");
+                Log("Opening...");
                 await device.Open();
-                JS.Log("Opened.");
+                Log("Opened.");
             }
             // Search for the first OUT endpoint in ALL configurations
             USBEndpoint? outEndpoint = null;
@@ -157,15 +203,15 @@ namespace BlazorUSBNVShutterTest.Services
             USBAlternateInterface? foundAlternate = null;
             USBConfiguration? foundConfig = null;
 
-            JS.Log("USB Configurations:", device.Configurations);
+            Log("USB Configurations:", device.Configurations);
             try
             {
                 var json = JS.Call<string>("JSON.stringify", device.Configurations);
-                JS.Log("USB Configurations JSON:", json);
+                Log("USB Configurations JSON: " + json);
             }
             catch (Exception ex)
             {
-                JS.Log("Failed to stringify configurations:", ex.Message);
+                Log("Failed to stringify configurations: " + ex.Message);
             }
 
             // Calculate total endpoint count for debugging
@@ -208,7 +254,7 @@ namespace BlazorUSBNVShutterTest.Services
 
             if (outEndpoint != null && foundInterface != null && foundAlternate != null && foundConfig != null)
             {
-                JS.Log($"Found Endpoint: {outEndpoint.EndpointNumber} Interface: {foundInterface.InterfaceNumber} Alt: {foundAlternate.AlternateSetting} Config: {foundConfig.ConfigurationValue}");
+                Log($"Found Endpoint: {outEndpoint.EndpointNumber} Interface: {foundInterface.InterfaceNumber} Alt: {foundAlternate.AlternateSetting} Config: {foundConfig.ConfigurationValue}");
                 
                 await device.SelectConfiguration(foundConfig.ConfigurationValue);
                 await device.ClaimInterface(foundInterface.InterfaceNumber);
@@ -218,28 +264,28 @@ namespace BlazorUSBNVShutterTest.Services
             }
             else
             {
-                JS.Log("No endpoints found via discovery - Device may need firmware OR we need to fallback.");
+                Log("No endpoints found via discovery - Device may need firmware OR we need to fallback.");
                 
                 // Fallback to original behavior if discovery fails.
                 // This allows us to hit the original error (which confirms the endpoint exists but isn't claimed correctly)
                 // or forces it to work if the rigorous checks above were too strict.
-                JS.Log("Attempting Fallback to Config 1, Interface 0, Endpoint 2...");
+                Log("Attempting Fallback to Config 1, Interface 0, Endpoint 2...");
                 try 
                 {
                     await device.SelectConfiguration(1);
                     await device.ClaimInterface(0);
                     await device.SelectAlternateInterface(0, 0);
                     EndpointNumber = 2;
-                    JS.Log("Fallback configuration successful.");
+                    Log("Fallback configuration successful.");
                 }
                 catch (Exception ex)
                 {
-                    JS.Log($"Fallback configuration failed: {ex.Message}");
+                    Log($"Fallback configuration failed: {ex.Message}");
                     // Leaving EndpointNumber as -1 so writeToPipe will still fail safely if this didn't work.
                 }
             }
 
-            JS.Log($"Reconfigured. Using Endpoint: {EndpointNumber}");
+            Log($"Reconfigured. Using Endpoint: {EndpointNumber}");
             Device = device;
             OnConnected?.Invoke();
         }
@@ -381,7 +427,7 @@ namespace BlazorUSBNVShutterTest.Services
             if (EndpointNumber < 0) throw new Exception("No valid USB endpoint found. Device may need firmware or drivers are incorrect.");
             using var pipeData = new Int32Array(data);
             var result = await Device.TransferOut(EndpointNumber, pipeData);
-            JS.Log("writeToPipe", pipeData, result);
+            Log("writeToPipe", pipeData, result);
         }
         async Task writeToPipe(byte[] data)
         {
@@ -389,7 +435,7 @@ namespace BlazorUSBNVShutterTest.Services
             if (Device == null) return;
             if (EndpointNumber < 0) throw new Exception("No valid USB endpoint found. Device may need firmware or drivers are incorrect.");
             var result = await Device.TransferOut(EndpointNumber, data);
-            JS.Log("writeToPipe", data, result);
+            Log("writeToPipe", data, result);
         }
 
         public bool Opened
@@ -422,7 +468,7 @@ namespace BlazorUSBNVShutterTest.Services
                 var firmwareBytes = await HttpClient.GetByteArrayAsync("nvstusb.fw");
 
                 // Upload firmware logic here
-                JS.Log("Firmware upload needed - uploading...", firmwareBytes.Length);
+                Log("Firmware upload needed - uploading...", firmwareBytes.Length);
 
                 // upload the firmware in chunks
                 // each chunk is prefixed with a 2-byte length and a 2-byte destination position
@@ -456,13 +502,13 @@ namespace BlazorUSBNVShutterTest.Services
                 }
                 catch (Exception ex)
                 {
-                    JS.Log($"Reset error (expected if device disconnects immediately): {ex.Message}");
+                    Log($"Reset error (expected if device disconnects immediately): {ex.Message}");
                 }
                 
                 Device = null; 
                 OnDisconnected?.Invoke();
                 
-                JS.Log("Waiting for device to reappear...");
+                Log("Waiting for device to reappear...");
                 
                 // Poll for the device to come back (limit to ~15 seconds)
                 for (var attempt = 0; attempt < 30; attempt++) 
@@ -472,7 +518,7 @@ namespace BlazorUSBNVShutterTest.Services
                     // If OnConnect event fired and set the device already
                     if (Device != null) 
                     {
-                        JS.Log("Device reconnected automatically via OnConnect.");
+                        Log("Device reconnected automatically via OnConnect.");
                         break;
                     }
 
@@ -480,7 +526,7 @@ namespace BlazorUSBNVShutterTest.Services
                     var devices = await FindSupportedDevices();
                     if (devices.Count > 0)
                     {
-                        JS.Log("Found device during polling.");
+                        Log("Found device during polling.");
                         await SetDevice(devices[0]);
                         break;
                     }
@@ -488,11 +534,11 @@ namespace BlazorUSBNVShutterTest.Services
 
                 if (Device != null)
                 {
-                    JS.Log("Firmware update sequence complete. Device verified.");
+                    Log("Firmware update sequence complete. Device verified.");
                 }
                 else
                 {
-                    JS.Log("Timed out waiting for device to reconnect.");
+                    Log("Timed out waiting for device to reconnect.");
                 }
             }
             return firmwareNeeded;

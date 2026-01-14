@@ -16,10 +16,11 @@
     </ul>
 </p>
 
-<p role="status">Device: @DeviceName (Endpoints: @NvidiaShutterGlasses.EndpointCount)</p>
+<p role="status">Device: @DeviceName (VID: @($"{NvidiaShutterGlasses.VendorId:X4}") PID: @($"{NvidiaShutterGlasses.ProductId:X4}") Rev: @NvidiaShutterGlasses.DeviceVersion Endpoints: @NvidiaShutterGlasses.EndpointCount)</p>
 
 <button class="btn btn-primary" @onclick="LogClear">Clear Log</button>
 <button disabled="@(!NvidiaShutterGlasses.Supported || NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Connect">Connect</button>
+<button disabled="@(!NvidiaShutterGlasses.Connected || NvidiaShutterGlasses.EndpointCount > 0)" class="btn btn-primary" @onclick="Connect">Force Scan</button>
 <button disabled="@(!NvidiaShutterGlasses.Connected)" class="btn btn-primary" @onclick="Disconnect">Disconnect</button>
 <button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="FirmwareCheck">Firmware Check</button>
 <button disabled="@(!NvidiaShutterGlasses.Opened)" class="btn btn-primary" @onclick="ToggleEyes">Toggle Eyes</button>
@@ -63,6 +64,10 @@
     {
         Log($"Device disconnected");
     }
+    void Device_OnLog(string msg)
+    {
+        Log(msg);
+    }
     protected override void OnInitialized()
     {
         if (!NvidiaShutterGlasses.Supported)
@@ -71,11 +76,13 @@
         }
         NvidiaShutterGlasses.OnConnected += Device_OnConnected;
         NvidiaShutterGlasses.OnDisconnected += Device_OnDisconnected;
+        NvidiaShutterGlasses.OnLog += Device_OnLog;
     }
     public void Dispose()
     {
         NvidiaShutterGlasses.OnConnected -= Device_OnConnected;
         NvidiaShutterGlasses.OnDisconnected -= Device_OnDisconnected;
+        NvidiaShutterGlasses.OnLog -= Device_OnLog;
     }
     async Task SendInit()
     {
@@ -94,6 +101,7 @@
         try
         {
             await NvidiaShutterGlasses.ToggleEyes();
+            Log($"Toggled Eyes (IsLeftEye: {NvidiaShutterGlasses.IsLeftEye})");
         }
         catch (Exception ex)
         {
