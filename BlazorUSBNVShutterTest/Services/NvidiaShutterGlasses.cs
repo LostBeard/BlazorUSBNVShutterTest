@@ -23,11 +23,17 @@ namespace BlazorUSBNVShutterTest.Services
         const byte NVSTUSB_CMD_READ = 0x02;
         const byte NVSTUSB_CMD_CLEAR = 0x40;
         const byte NVSTUSB_CMD_SET_EYE = 0xAA;
-        public bool InvertEyes { get; set; }
         public enum ShutterMode { Normal, LeftClosed, RightClosed, SlowDebug }
         public ShutterMode CurrentMode { get; private set; } = ShutterMode.Normal;
-        int EndpointNumber = -1;
+        
+        // Endpoint 2: General Commands (Init, Read Request)
+        int EndpointCmd = -1;
+        // Endpoint 1: Eye Control (Toggle)
+        int EndpointEye = -1;
+        // Endpoint 4: Read Data (IN)
         int InEndpointNumber = -1;
+        // Default Endpoint (Fallback)
+        int EndpointNumber = -1;
 
         BlazorJSRuntime JS;
         public USBDevice? Device;
@@ -239,7 +245,7 @@ namespace BlazorUSBNVShutterTest.Services
             }
             EndpointCount = totalEndpoints;
 
-            // Scoring: +10 if OUT exists, +20 if IN exists, +50 if IN is EP 4.
+            // Scoring: +20 for OUT EP 1 or 2. +50 for IN EP 4.
             USBConfiguration? bestConfig = null;
             USBInterface? bestInterface = null;
             USBAlternateInterface? bestAlternate = null;
@@ -254,7 +260,11 @@ namespace BlazorUSBNVShutterTest.Services
                         int score = 0;
                         foreach (var endpoint in alt.Endpoints)
                         {
-                            if (endpoint.Direction == "out") score += 10;
+                            if (endpoint.Direction == "out") 
+                            {
+                                score += 10;
+                                if (endpoint.EndpointNumber == 1 || endpoint.EndpointNumber == 2) score += 20;
+                            }
                             if (endpoint.Direction == "in")
                             {
                                  score += 20;
@@ -280,33 +290,30 @@ namespace BlazorUSBNVShutterTest.Services
                 await device.ClaimInterface(bestInterface.InterfaceNumber);
                 await device.SelectAlternateInterface(bestInterface.InterfaceNumber, bestAlternate.AlternateSetting);
                 
-                // Now extract endpoints from the WINNING alternate
-                USBEndpoint? outEp = null;
-                USBEndpoint? inEp = null;
+                EndpointCmd = -1;
+                EndpointEye = -1;
+                InEndpointNumber = -1;
 
                 foreach(var ep in bestAlternate.Endpoints)
                 {
-                    if (ep.Direction == "out" && outEp == null) outEp = ep;
+                    if (ep.Direction == "out")
+                    {
+                        if (ep.EndpointNumber == 1) EndpointEye = ep.EndpointNumber;
+                        if (ep.EndpointNumber == 2) EndpointCmd = ep.EndpointNumber;
+                    }
                     if (ep.Direction == "in")
                     {
-                        if (ep.EndpointNumber == 4) inEp = ep; // Prefer 4
-                        else if (inEp == null) inEp = ep;
+                        if (ep.EndpointNumber == 4) InEndpointNumber = ep.EndpointNumber; // Prefer 4
+                        else if (InEndpointNumber == -1) InEndpointNumber = ep.EndpointNumber;
                     }
                 }
+                
+                Log($"Endpoints Configured: Cmd(OUT)={EndpointCmd}, Eye(OUT)={EndpointEye}, Read(IN)={InEndpointNumber}");
 
-                if (outEp != null) 
+                if (EndpointCmd == -1 || EndpointEye == -1) 
                 {
-                    EndpointNumber = outEp.EndpointNumber;
-                    Log($"Using OUT Endpoint: {EndpointNumber}");
-                }
-                if (inEp != null)
-                {
-                     InEndpointNumber = inEp.EndpointNumber;
-                     Log($"Using IN Endpoint: {InEndpointNumber}");
-                }
-                else
-                {
-                     Log("Warning: No IN endpoint found on best configuration.");
+                     Log("Warning: Did not find both expected OUT endpoints (1 & 2). Some features may fail.");
+                     // Fallback: use whatever we found if one is missing?
                 }
             }
             else
@@ -320,10 +327,11 @@ namespace BlazorUSBNVShutterTest.Services
                     await device.SelectConfiguration(1);
                     await device.ClaimInterface(0);
                     await device.SelectAlternateInterface(0, 0);
-                    EndpointNumber = 2; // Common default
-                    // Try to guess IN endpoint?
-                    InEndpointNumber = 4; // Guess based on nvstusb.c
-                    Log("Fallback successful (Assumed EP 2/4).");
+                    // Assume standard layout
+                    EndpointCmd = 2;
+                    EndpointEye = 1;
+                    InEndpointNumber = 4; 
+                    Log("Fallback successful (Assumed EP 1/2/4).");
                 }
                 catch (Exception ex)
                 {
@@ -348,7 +356,8 @@ namespace BlazorUSBNVShutterTest.Services
             var cmd = new byte[] { 0x42, 0x18, 0x03, 0x00 };
             try 
             {
-                await writeToPipe(cmd);
+                // Use EndpointCmd (2)
+                await writeToPipe(cmd, EndpointCmd);
             }
             catch (Exception ex)
             {
@@ -431,7 +440,8 @@ namespace BlazorUSBNVShutterTest.Services
                 0, 0, // unused
                 (byte)b, (byte)(b>> 8), (byte)(b>> 16), (byte)(b>>24)
             };
-            await writeToPipe(sequence);
+            // Use EndpointEye (1)
+            await writeToPipe(sequence, EndpointEye);
         }
         public async Task Initialize(float rate = 120, ShutterMode newMode = ShutterMode.Normal)
         {
@@ -485,7 +495,8 @@ namespace BlazorUSBNVShutterTest.Services
 
                 (byte)z, (byte)(z>>8), (byte)(z>>16), (byte)(z>>24)     /* 201b: timer 2 reload value */
               };
-            await writeToPipe(cmdTimings);
+            // Use EndpointCmd (2)
+            await writeToPipe(cmdTimings, EndpointCmd);
 
             var cmd0x1c = new byte[] {
                 NVSTUSB_CMD_WRITE,      /* write data */
@@ -498,7 +509,7 @@ namespace BlazorUSBNVShutterTest.Services
                                            it reaches 6. could be the index to 6 byte values 
                                            at 0x17ce that are loaded into TH0*/
               };
-            await writeToPipe(cmd0x1c);
+            await writeToPipe(cmd0x1c, EndpointCmd);
 
             /* wait at most 2 seconds before going into idle */
             int timeout = (int)(rate * 4);
@@ -510,7 +521,7 @@ namespace BlazorUSBNVShutterTest.Services
 
                 (byte)timeout, (byte)(timeout>>8)     /* idle timeout (number of frames) */
               };
-            await writeToPipe(cmdTimeout);
+            await writeToPipe(cmdTimeout, EndpointCmd);
 
             var cmd0x1b = new byte[] {
                 NVSTUSB_CMD_WRITE,      /* write data */
@@ -526,7 +537,7 @@ namespace BlazorUSBNVShutterTest.Services
                                            bit 6:   restart t0 on some conditions in TD_Poll()
                                          */
               };
-            await writeToPipe(cmd0x1b);
+            await writeToPipe(cmd0x1b, EndpointCmd);
         }
         public async Task SendInit()
         {
@@ -534,22 +545,26 @@ namespace BlazorUSBNVShutterTest.Services
         }
         public bool IsLeftEye { get; private set; } = false;
 
-        async Task writeToPipe(int[] data)
+        async Task writeToPipe(int[] data, int endpoint = -1)
         {
-            if (USB == null) return;
-            if (Device == null) return;
-            if (EndpointNumber < 0) throw new Exception("No valid USB endpoint found. Device may need firmware or drivers are incorrect.");
-            using var pipeData = new Int32Array(data);
-            var result = await Device.TransferOut(EndpointNumber, pipeData);
-            Log("writeToPipe", pipeData, result);
+            var bytes = new byte[data.Length];
+            for(int i = 0; i < data.Length; i++) bytes[i] = (byte)data[i];
+            await writeToPipe(bytes, endpoint);
         }
-        async Task writeToPipe(byte[] data)
+        async Task writeToPipe(byte[] data, int endpoint = -1)
         {
             if (USB == null) return;
             if (Device == null) return;
-            if (EndpointNumber < 0) throw new Exception("No valid USB endpoint found. Device may need firmware or drivers are incorrect.");
-            var result = await Device.TransferOut(EndpointNumber, data);
-            Log("writeToPipe", data, result);
+            // Use provided endpoint, or default to EndpointCmd (2) if not specified, or fallback to EndpointNumber (discovery, typically 2)
+            // If endpoint argument is -1, use EndpointCmd (defaults to 2).
+            int ep = endpoint;
+            if (ep == -1) ep = EndpointCmd; 
+            if (ep == -1) ep = EndpointNumber; // Last resort
+
+            if (ep < 0) throw new Exception("No valid USB endpoint found. Device may need firmware or drivers are incorrect.");
+            using var pipeData = new Uint8Array(data);
+            var result = await Device.TransferOut(ep, pipeData);
+            // Log("writeToPipe", pipeData, result);
         }
 
         public bool Opened
