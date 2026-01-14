@@ -239,81 +239,95 @@ namespace BlazorUSBNVShutterTest.Services
             }
             EndpointCount = totalEndpoints;
 
+            // Scoring: +10 if OUT exists, +20 if IN exists, +50 if IN is EP 4.
+            USBConfiguration? bestConfig = null;
+            USBInterface? bestInterface = null;
+            USBAlternateInterface? bestAlternate = null;
+            int bestScore = 0;
+
             foreach (var config in device.Configurations)
             {
                 foreach (var iface in config.Interfaces)
                 {
                     foreach (var alt in iface.Alternates)
                     {
+                        int score = 0;
                         foreach (var endpoint in alt.Endpoints)
                         {
-                            if (endpoint.Direction == "out" && outEndpoint == null)
-                            {
-                                outEndpoint = endpoint;
-                                foundInterface = iface;
-                                foundAlternate = alt;
-                                foundConfig = config;
-                            }
+                            if (endpoint.Direction == "out") score += 10;
                             if (endpoint.Direction == "in")
                             {
-                                // Prefer Endpoint 4 if available (per nvstusb.c), otherwise take first found
-                                if (endpoint.EndpointNumber == 4)
-                                {
-                                    inEndpoint = endpoint;
-                                }
-                                else if (inEndpoint == null)
-                                {
-                                    inEndpoint = endpoint;
-                                }
+                                 score += 20;
+                                 if (endpoint.EndpointNumber == 4) score += 50;
                             }
                         }
+
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestConfig = config;
+                            bestInterface = iface;
+                            bestAlternate = alt;
+                        }
                     }
-                    if (outEndpoint != null) break;
                 }
-                if (outEndpoint != null) break;
             }
 
-            if (outEndpoint != null && foundInterface != null && foundAlternate != null && foundConfig != null)
+            if (bestConfig != null && bestInterface != null && bestAlternate != null)
             {
-                Log($"Found Endpoint: {outEndpoint.EndpointNumber} Interface: {foundInterface.InterfaceNumber} Alt: {foundAlternate.AlternateSetting} Config: {foundConfig.ConfigurationValue}");
+                Log($"Best Config Found: Score {bestScore}. Alt {bestAlternate.AlternateSetting}");
+                await device.SelectConfiguration(bestConfig.ConfigurationValue);
+                await device.ClaimInterface(bestInterface.InterfaceNumber);
+                await device.SelectAlternateInterface(bestInterface.InterfaceNumber, bestAlternate.AlternateSetting);
                 
-                await device.SelectConfiguration(foundConfig.ConfigurationValue);
-                await device.ClaimInterface(foundInterface.InterfaceNumber);
-                // Only select alternate if it's not the default (0) or if we need to enforce it
-                await device.SelectAlternateInterface(foundInterface.InterfaceNumber, foundAlternate.AlternateSetting);
-                EndpointNumber = outEndpoint.EndpointNumber;
-                
-                if (inEndpoint != null)
+                // Now extract endpoints from the WINNING alternate
+                USBEndpoint? outEp = null;
+                USBEndpoint? inEp = null;
+
+                foreach(var ep in bestAlternate.Endpoints)
                 {
-                    InEndpointNumber = inEndpoint.EndpointNumber;
-                    Log($"Found IN Endpoint: {InEndpointNumber}");
+                    if (ep.Direction == "out" && outEp == null) outEp = ep;
+                    if (ep.Direction == "in")
+                    {
+                        if (ep.EndpointNumber == 4) inEp = ep; // Prefer 4
+                        else if (inEp == null) inEp = ep;
+                    }
+                }
+
+                if (outEp != null) 
+                {
+                    EndpointNumber = outEp.EndpointNumber;
+                    Log($"Using OUT Endpoint: {EndpointNumber}");
+                }
+                if (inEp != null)
+                {
+                     InEndpointNumber = inEp.EndpointNumber;
+                     Log($"Using IN Endpoint: {InEndpointNumber}");
                 }
                 else
                 {
-                    // Fallback guess: typically 0x84 (132) or just logical 4? WebUSB expects endpoint number (e.g. 4)
-                    Log("Warning: No IN endpoint found during scan.");
+                     Log("Warning: No IN endpoint found on best configuration.");
                 }
             }
             else
             {
-                Log("No endpoints found via discovery - Device may need firmware OR we need to fallback.");
+                Log("No valid configuration found via discovery.");
+                // Fallback logic could go here, or we trust the BestScore=0 means nothing found.
                 
-                // Fallback to original behavior if discovery fails.
-                // This allows us to hit the original error (which confirms the endpoint exists but isn't claimed correctly)
-                // or forces it to work if the rigorous checks above were too strict.
-                Log("Attempting Fallback to Config 1, Interface 0, Endpoint 2...");
+                Log("Attempting Fallback to Config 1, Interface 0, Alternate 0...");
                 try 
                 {
                     await device.SelectConfiguration(1);
                     await device.ClaimInterface(0);
                     await device.SelectAlternateInterface(0, 0);
-                    EndpointNumber = 2;
-                    Log("Fallback configuration successful.");
+                    EndpointNumber = 2; // Common default
+                    // Try to guess IN endpoint?
+                    InEndpointNumber = 4; // Guess based on nvstusb.c
+                    Log("Fallback successful (Assumed EP 2/4).");
                 }
                 catch (Exception ex)
                 {
-                    Log($"Fallback configuration failed: {ex.Message}");
-                    // Leaving EndpointNumber as -1 so writeToPipe will still fail safely if this didn't work.
+                    Log($"Fallback failed: {ex.Message}");
                 }
             }
 
