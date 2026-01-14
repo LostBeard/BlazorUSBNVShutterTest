@@ -101,7 +101,7 @@
         try
         {
             await NvidiaShutterGlasses.ToggleEyes();
-            Log($"Toggled Eyes (IsLeftEye: {NvidiaShutterGlasses.IsLeftEye})");
+            Log($"Switched Mode: {NvidiaShutterGlasses.CurrentMode}");
         }
         catch (Exception ex)
         {

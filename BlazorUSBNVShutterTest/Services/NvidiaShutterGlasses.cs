@@ -17,6 +17,8 @@ namespace BlazorUSBNVShutterTest.Services
         const byte NVSTUSB_CMD_CLEAR = 0x40;
         const byte NVSTUSB_CMD_SET_EYE = 0xAA;
         public bool InvertEyes { get; set; }
+        public enum ShutterMode { Normal, LeftClosed, RightClosed, SlowDebug }
+        public ShutterMode CurrentMode { get; private set; } = ShutterMode.Normal;
         int EndpointNumber = -1;
 
         BlazorJSRuntime JS;
@@ -306,25 +308,34 @@ namespace BlazorUSBNVShutterTest.Services
         /// </summary>
         /// <param name="offset"></param>
         /// <returns></returns>
+        /// <summary>
+        /// Cycles through shutter modes: Normal -> LeftClosed -> RightClosed
+        /// </summary>
+        /// <returns></returns>
         public async Task ToggleEyes(int offset = 5)
         {
-            var rate = 120;
-            uint b = NVSTUSB_T2_COUNT((1000000 / rate) / 1.8d);
-            IsLeftEye = !IsLeftEye;
-            Log($"Toggling eyes (SetEye Cmd). IsLeftEye: {IsLeftEye}");
-            
-            var sequence = new byte[8]
+            switch (CurrentMode)
             {
-                NVSTUSB_CMD_SET_EYE,
-                IsLeftEye ? (byte)0xFE : (byte)0xFF,
-                0, 0, // unused
-                (byte)b, (byte)(b>> 8), (byte)(b>> 16), (byte)(b>>24)
-            };
-            await writeToPipe(sequence);
+                case ShutterMode.Normal:
+                    CurrentMode = ShutterMode.LeftClosed;
+                    break;
+                case ShutterMode.LeftClosed:
+                    CurrentMode = ShutterMode.RightClosed;
+                    break;
+                default:
+                    CurrentMode = ShutterMode.Normal;
+                    break;
+            }
+            Log($"Switching to Mode: {CurrentMode}");
+            if (CurrentMode == ShutterMode.SlowDebug)
+                await Initialize(newMode: CurrentMode, rate: 2);
+            else
+                await Initialize(newMode: CurrentMode);
         }
-        public async Task Initialize(float rate = 120)
+        public async Task Initialize(float rate = 120, ShutterMode newMode = ShutterMode.Normal)
         {
             if (Device == null) return;
+            CurrentMode = newMode;
 
             /* some timing voodoo */
             int frameTime = (int)(1000000.0 / rate);     /* 8.33333 ms if 120 Hz */
@@ -358,10 +369,13 @@ namespace BlazorUSBNVShutterTest.Services
 
                 /* wave forms to send via IR: */
                 /* wave forms to send via IR: */
-                0x30,                     /* 2013: 110000 PD1=0, PD2=0: left eye off  */
-                0x28,                     /* 2014: 101000 PD1=1, PD2=0: left eye on   */
-                0x24,                     /* 2015: 100100 PD1=0, PD2=1: right eye off */
-                0x22,                     /* 2016: 100010 PD1=1, PD2=1: right eye on  */
+                /* 0x30=L_OFF, 0x28=L_ON, 0x24=R_OFF, 0x22=R_ON */
+                
+                // Normal: L_Off, L_On,  R_Off, R_On
+                (byte)(newMode == ShutterMode.RightClosed ? 0x30 : 0x30), // Slot 1: L Off (Keep Off)
+                (byte)(newMode == ShutterMode.LeftClosed ? 0x30 : 0x28),  // Slot 2: L On (Force Off if LClosed)
+                (byte)(newMode == ShutterMode.LeftClosed ? 0x24 : 0x24),  // Slot 3: R Off (Keep Off)
+                (byte)(newMode == ShutterMode.RightClosed ? 0x24 : 0x22), // Slot 4: R On (Force Off if RClosed)
 
                 /* ?? used when frameState is != 2, for toggling bits in Port B,
                  * values seem to have no influence on the glasses or infrared signals */
