@@ -14,14 +14,16 @@ This Blazor WASM app demonstrates WebUSB in Blazor using the Nvidia 3D Vision sh
 ### What the demo does
 - When plugged into USB, the button on the front of the Nvidia 3D Vision USB transmitter blinks red, indicating the device needs firmware before it can be used. 
 - The firmware file `nvstusb.fw` will be loaded onto the device using WebUSB which causes the button to become solid green, indicating it is ready for operation.
+- Read the wheel and button input from the transmitter
 - *Once the firmware is loaded, clicking the "Toggle Shutters" button will alternately turn the shutter glasses on and off by sending the appropriate command to the USB transmitter.
 
-* Indicates incomplete functionality as of this writing.
+*Indicates incomplete functionality as of this writing.
 
 ### Notes
-This demo requires a browser that supports WebUSB.
-
-When tested using Windows 11 Chrome 64bit, the firmware check fails to detect when the firmware is not needed because no endpoints are reported by the device after firmware is loaded. The detection works correctly in Android Chrome. This is likely driver related.
+- This demo requires a browser that supports WebUSB.
+- Windows may require using [Zadig](https://zadig.akeo.ie/) to load Micrsooft's WinUSB driver for the 'NVIDIA stereo controller'
+- Chrome Windows - Endpoints are never found.
+- Chrome Android - Endpoints are found. Transmitter front button input reading works. Wheel reading may work.
 
 ## Hardware
 NVIDIA 3D Vision USB IR Emitter:
